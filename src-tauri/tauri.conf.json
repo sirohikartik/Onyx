@@ -5,7 +5,6 @@
   "identifier": "com.kartiksirohi.onyx",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
@@ -18,7 +17,8 @@
         "minWidth": 700,
         "minHeight": 500,
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "devtools": true
       }
     ],
     "security": {
