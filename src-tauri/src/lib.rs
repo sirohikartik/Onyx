@@ -668,6 +668,178 @@ fn git_log_history(limit: Option<usize>, vault_path: Option<String>) -> Result<V
     Ok(items)
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VaultSearchResult {
+    pub path: String,
+    pub title: String,
+    pub matches: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VaultNoteItem {
+    pub path: String,
+    pub title: String,
+    pub content: String,
+}
+
+#[tauri::command]
+fn fetch_web_page(url: String) -> Result<String, String> {
+    let mut clean_url = url.trim().to_string();
+    if !clean_url.starts_with("http://") && !clean_url.starts_with("https://") {
+        clean_url = format!("https://{}", clean_url);
+    }
+
+    let output = Command::new("curl")
+        .args([
+            "-sL",
+            "--max-time",
+            "10",
+            "-H",
+            "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            &clean_url,
+        ])
+        .output()
+        .map_err(|e| format!("Curl error: {}", e))?;
+
+    if !output.status.success() {
+        return Err("Failed to load webpage".to_string());
+    }
+
+    let html = String::from_utf8_lossy(&output.stdout).to_string();
+    
+    // Inject base href tag so relative images and stylesheets work
+    let base_tag = format!("<base href=\"{}\" target=\"_blank\">", clean_url);
+    let injected = if html.contains("<head>") {
+        html.replacen("<head>", &format!("<head>{}", base_tag), 1)
+    } else if html.contains("<HEAD>") {
+        html.replacen("<HEAD>", &format!("<HEAD>{}", base_tag), 1)
+    } else {
+        format!("{}{}", base_tag, html)
+    };
+
+    Ok(injected)
+}
+
+#[tauri::command]
+fn search_vault(query: String, vault_path: Option<String>) -> Result<Vec<VaultSearchResult>, String> {
+    let vault = resolve_vault_path(vault_path);
+    if !vault.exists() {
+        return Ok(vec![]);
+    }
+
+    let q = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for entry in walkdir::WalkDir::new(&vault).into_iter().flatten() {
+        if entry.file_type().is_file() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "md").unwrap_or(false) {
+                if let Ok(content) = fs::read_to_string(path) {
+                    let rel_path = path
+                        .strip_prefix(&vault)
+                        .unwrap_or(path)
+                        .to_string_lossy()
+                        .to_string();
+
+                    let mut matches = Vec::new();
+                    for line in content.lines() {
+                        if line.to_lowercase().contains(&q) {
+                            matches.push(line.trim().to_string());
+                            if matches.len() >= 5 {
+                                break;
+                            }
+                        }
+                    }
+
+                    if !matches.is_empty() || rel_path.to_lowercase().contains(&q) {
+                        let title = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                        results.push(VaultSearchResult {
+                            path: rel_path,
+                            title,
+                            matches,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+#[tauri::command]
+fn get_vault_all_notes(vault_path: Option<String>) -> Result<Vec<VaultNoteItem>, String> {
+    let vault = resolve_vault_path(vault_path);
+    if !vault.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut notes = Vec::new();
+    for entry in walkdir::WalkDir::new(&vault).into_iter().flatten() {
+        if entry.file_type().is_file() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "md").unwrap_or(false) {
+                if let Ok(content) = fs::read_to_string(path) {
+                    let rel_path = path
+                        .strip_prefix(&vault)
+                        .unwrap_or(path)
+                        .to_string_lossy()
+                        .to_string();
+                    let title = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                    // Keep up to 2000 chars per note to fit context window comfortably
+                    let preview = if content.len() > 2000 {
+                        content.chars().take(2000).collect::<String>() + "\n...[truncated]"
+                    } else {
+                        content
+                    };
+                    notes.push(VaultNoteItem {
+                        path: rel_path,
+                        title,
+                        content: preview,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(notes)
+}
+
+#[tauri::command]
+fn get_ollama_models() -> Result<Vec<String>, String> {
+    // 1. Try curl tags
+    let output = Command::new("curl")
+        .args(["-s", "http://localhost:11434/api/tags"])
+        .output();
+
+    if let Ok(out) = output {
+        if out.status.success() {
+            if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                if let Some(arr) = json.get("models").and_then(|m| m.as_array()) {
+                    let mut list = Vec::new();
+                    for item in arr {
+                        if let Some(name) = item.get("name").and_then(|n| n.as_str()) {
+                            list.push(name.to_string());
+                        }
+                    }
+                    if !list.is_empty() {
+                        return Ok(list);
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback default list
+    Ok(vec![
+        "gemma4:31b-cloud".to_string(),
+        "gemma3:4b-cloud".to_string(),
+        "nemotron-3-super:cloud".to_string(),
+        "deepseek-v4-flash:cloud".to_string(),
+        "gpt-oss:20b-cloud".to_string(),
+    ])
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -687,7 +859,11 @@ pub fn run() {
             git_status,
             git_init_and_setup,
             git_sync,
-            git_log_history
+            git_log_history,
+            fetch_web_page,
+            search_vault,
+            get_vault_all_notes,
+            get_ollama_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running onyx application");

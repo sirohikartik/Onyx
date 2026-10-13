@@ -14,11 +14,19 @@ import {
   CheckCircle2,
   Trash2,
   AlertTriangle,
+  Sparkles,
+  Globe,
+  Plus,
+  X,
+  FileText,
 } from "lucide-react";
-import { FileNode, GitStatusInfo, ViewMode } from "./types";
+import { FileNode, GitStatusInfo, TabItem } from "./types";
 import { FileTree } from "./components/FileTree";
 import { Editor } from "./components/Editor";
 import { Preview } from "./components/Preview";
+import { WebTab } from "./components/WebTab";
+import { AiSidebar } from "./components/AiSidebar";
+import { ResizeHandle } from "./components/ResizeHandle";
 import { GitModal } from "./components/GitModal";
 import { SettingsModal } from "./components/SettingsModal";
 import "./App.css";
@@ -26,13 +34,26 @@ import "./App.css";
 export function App() {
   const [vaultPath, setVaultPath] = useState<string>("");
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
-  const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
-  const [noteContent, setNoteContent] = useState<string>("");
-  const [isDirty, setIsDirty] = useState<boolean>(false);
-  const [isSaving, setIsSaving] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [viewMode, setViewMode] = useState<ViewMode>("split");
-  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
+
+  // Tabs State
+  const [tabs, setTabs] = useState<TabItem[]>([
+    {
+      id: "tab-welcome",
+      type: "note",
+      title: "Welcome.md",
+      path: "Welcome.md",
+      content: "",
+      viewMode: "split",
+    },
+  ]);
+  const [activeTabId, setActiveTabId] = useState<string>("tab-welcome");
+
+  // Sidebars Sizing & Toggle
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState<boolean>(true);
+  const [leftWidth, setLeftWidth] = useState<number>(260);
+  const [aiSidebarOpen, setAiSidebarOpen] = useState<boolean>(false);
+  const [rightWidth, setRightWidth] = useState<number>(360);
 
   // Status & Git
   const [gitStatus, setGitStatus] = useState<GitStatusInfo | null>(null);
@@ -76,6 +97,9 @@ export function App() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  // Active Tab Derived
+  const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+
   // Load vault path on startup
   useEffect(() => {
     const initVault = async () => {
@@ -98,25 +122,9 @@ export function App() {
       const tree = await invoke<FileNode[]>("get_file_tree", { vaultPath: v });
       setFileTree(tree);
 
-      // If no file active, select Welcome.md or first markdown file
-      if (!activeFilePath && tree.length > 0) {
-        const findFirstMd = (nodes: FileNode[]): string | null => {
-          for (const node of nodes) {
-            if (!node.is_dir && node.path.endsWith(".md")) {
-              if (node.path === "Welcome.md") return node.path;
-              return node.path;
-            }
-            if (node.is_dir && node.children) {
-              const res = findFirstMd(node.children);
-              if (res) return res;
-            }
-          }
-          return null;
-        };
-        const first = findFirstMd(tree);
-        if (first) {
-          loadFile(first, v);
-        }
+      // If active tab is note and has path, load its content
+      if (activeTab?.type === "note" && activeTab.path) {
+        loadFileIntoTab(activeTab.id, activeTab.path, v);
       }
     } catch (e) {
       console.error("Failed to load file tree:", e);
@@ -134,7 +142,7 @@ export function App() {
     }
   };
 
-  const loadFile = async (relPath: string, customVault?: string) => {
+  const loadFileIntoTab = async (tabId: string, relPath: string, customVault?: string) => {
     const v = customVault || vaultPath;
     if (!v) return;
     try {
@@ -142,37 +150,113 @@ export function App() {
         relativePath: relPath,
         vaultPath: v,
       });
-      setActiveFilePath(relPath);
-      setNoteContent(content);
-      setIsDirty(false);
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                path: relPath,
+                title: relPath.split("/").pop() || relPath,
+                content,
+                isDirty: false,
+              }
+            : t
+        )
+      );
     } catch (e) {
       console.error("Failed to read file:", e);
     }
   };
 
+  // Open note file (switches to existing tab or opens new)
+  const openFile = (relPath: string) => {
+    const existing = tabs.find((t) => t.type === "note" && t.path === relPath);
+    if (existing) {
+      setActiveTabId(existing.id);
+    } else {
+      const newId = `tab-${Date.now()}`;
+      const newTab: TabItem = {
+        id: newId,
+        type: "note",
+        title: relPath.split("/").pop() || relPath,
+        path: relPath,
+        content: "",
+        viewMode: "split",
+      };
+      setTabs((prev) => [...prev, newTab]);
+      setActiveTabId(newId);
+      loadFileIntoTab(newId, relPath);
+    }
+  };
+
+  // Open new Web Tab
+  const openWebTab = (initialUrl: string = "https://google.com") => {
+    const newId = `tab-web-${Date.now()}`;
+    const newTab: TabItem = {
+      id: newId,
+      type: "web",
+      title: "Web Browser",
+      url: initialUrl,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newId);
+  };
+
+  // Close Tab
+  const closeTab = (tabId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (tabs.length <= 1) {
+      // Don't close last tab, reset it to empty note
+      setTabs([
+        {
+          id: `tab-${Date.now()}`,
+          type: "note",
+          title: "Untitled.md",
+          path: "Untitled.md",
+          content: "# Untitled\n\n",
+          viewMode: "split",
+        },
+      ]);
+      return;
+    }
+
+    const index = tabs.findIndex((t) => t.id === tabId);
+    const nextTabs = tabs.filter((t) => t.id !== tabId);
+    setTabs(nextTabs);
+
+    if (activeTabId === tabId) {
+      const nextActive = nextTabs[Math.max(0, index - 1)];
+      setActiveTabId(nextActive.id);
+    }
+  };
+
+  // Save current note
   const saveFile = useCallback(async () => {
-    if (!activeFilePath || !vaultPath) return;
-    setIsSaving(true);
+    if (!activeTab || activeTab.type !== "note" || !activeTab.path || !vaultPath) return;
     try {
       await invoke("write_file", {
-        relativePath: activeFilePath,
-        content: noteContent,
+        relativePath: activeTab.path,
+        content: activeTab.content || "",
         vaultPath,
       });
-      setIsDirty(false);
+      setTabs((prev) =>
+        prev.map((t) => (t.id === activeTab.id ? { ...t, isDirty: false } : t))
+      );
       refreshGit();
     } catch (e) {
       console.error("Failed to save file:", e);
       showToast("Error saving note!");
-    } finally {
-      setIsSaving(false);
     }
-  }, [activeFilePath, vaultPath, noteContent]);
+  }, [activeTab, vaultPath]);
 
-  // Debounced auto-save
+  // Debounced note content change
   const handleContentChange = (newText: string) => {
-    setNoteContent(newText);
-    setIsDirty(true);
+    if (!activeTab || activeTab.type !== "note") return;
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === activeTab.id ? { ...t, content: newText, isDirty: true } : t
+      )
+    );
 
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -222,7 +306,7 @@ export function App() {
             vaultPath,
           });
           await refreshTree();
-          await loadFile(created);
+          openFile(created);
           showToast(`Created note: ${name}`);
         } catch (e: any) {
           showToast(`Error: ${String(e)}`);
@@ -280,9 +364,11 @@ export function App() {
             vaultPath,
           });
           await refreshTree();
-          if (activeFilePath === path) {
-            setActiveFilePath(newPath);
-          }
+          setTabs((prev) =>
+            prev.map((t) =>
+              t.path === path ? { ...t, path: newPath, title: clean } : t
+            )
+          );
           showToast(`Renamed to '${clean}'`);
         } catch (e: any) {
           showToast(`Error: ${String(e)}`);
@@ -305,10 +391,8 @@ export function App() {
             relativePath: path,
             vaultPath,
           });
-          if (activeFilePath === path) {
-            setActiveFilePath(null);
-            setNoteContent("");
-          }
+          // Close tab if open
+          setTabs((prev) => prev.filter((t) => t.path !== path));
           await refreshTree();
           await refreshGit();
           showToast(`Deleted '${name}'`);
@@ -319,9 +403,10 @@ export function App() {
     });
   };
 
-  // Interactive task list checkbox toggle
+  // Interactive task list toggle
   const handleToggleTask = (taskIndex: number) => {
-    const lines = noteContent.split("\n");
+    if (!activeTab || activeTab.type !== "note" || !activeTab.content) return;
+    const lines = activeTab.content.split("\n");
     let currentTaskCount = 0;
 
     for (let i = 0; i < lines.length; i++) {
@@ -333,17 +418,7 @@ export function App() {
           const newStatus = isChecked ? " " : "x";
           lines[i] = `${match[1]}${newStatus}${match[3]}`;
           const newContent = lines.join("\n");
-          setNoteContent(newContent);
-          setIsDirty(true);
-          // Save directly
-          invoke("write_file", {
-            relativePath: activeFilePath,
-            content: newContent,
-            vaultPath,
-          }).then(() => {
-            setIsDirty(false);
-            refreshGit();
-          });
+          handleContentChange(newContent);
           return;
         }
         currentTaskCount++;
@@ -351,11 +426,37 @@ export function App() {
     }
   };
 
-  // Word & Char Count
-  const words = noteContent.trim() ? noteContent.trim().split(/\s+/).length : 0;
-  const chars = noteContent.length;
+  // Insert AI generated text into active note
+  const handleInsertIntoNote = (textToInsert: string) => {
+    if (!activeTab || activeTab.type !== "note") {
+      showToast("Open a note tab to insert AI text");
+      return;
+    }
+    const current = activeTab.content || "";
+    handleContentChange(current + textToInsert);
+    showToast("Inserted AI response into note!");
+  };
 
-  // Total pending git changes
+  // Keyboard Shortcuts (Cmd+W, Cmd+T, Cmd+S)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        closeTab(activeTabId);
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        openWebTab();
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [activeTabId, tabs]);
+
+  const words =
+    activeTab?.type === "note" && activeTab.content?.trim()
+      ? activeTab.content.trim().split(/\s+/).length
+      : 0;
+  const chars = activeTab?.type === "note" ? activeTab.content?.length || 0 : 0;
   const pendingChanges =
     (gitStatus?.modified_count || 0) + (gitStatus?.untracked_count || 0);
 
@@ -366,14 +467,13 @@ export function App() {
         data-tauri-drag-region
         className="h-11 bg-[#050505] border-b border-[#181818] flex items-center justify-between px-3 shrink-0 select-none"
       >
-        {/* Left Section: macOS traffic lights spacing & Vault Name */}
         <div className="flex items-center gap-3">
-          {/* Spacing for macOS overlay traffic lights */}
+          {/* Spacing for macOS traffic lights */}
           <div className="w-16 h-4" />
 
           <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            title="Toggle Sidebar"
+            onClick={() => setLeftSidebarOpen(!leftSidebarOpen)}
+            title="Toggle File Explorer"
             className="p-1.5 text-[#888] hover:text-white rounded hover:bg-[#161616] transition"
           >
             <SidebarIcon className="w-4 h-4" />
@@ -386,63 +486,78 @@ export function App() {
           <span className="text-[#333] text-xs">/</span>
 
           <span className="text-xs text-[#888] font-mono truncate max-w-xs">
-            {activeFilePath || "No note selected"}
+            {activeTab?.title || "No Tab"}
           </span>
 
-          {isDirty && (
+          {activeTab?.isDirty && (
             <span
               title="Unsaved changes"
               className="w-2 h-2 rounded-full bg-[#f59e0b] animate-pulse"
             />
           )}
-
-          {isSaving && (
-            <span className="text-[10px] text-[#777] italic">saving...</span>
-          )}
         </div>
 
-        {/* Right Section: View Mode Toggles & Git Sync */}
         <div className="flex items-center gap-2">
-          {/* View Mode Toggle Buttons */}
-          <div className="flex items-center bg-[#111111] p-0.5 rounded-lg border border-[#1f1f1f]">
-            <button
-              onClick={() => setViewMode("edit")}
-              title="Edit Mode"
-              className={`p-1.5 rounded transition ${
-                viewMode === "edit"
-                  ? "bg-[#222222] text-white"
-                  : "text-[#777] hover:text-white"
-              }`}
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setViewMode("split")}
-              title="Split View"
-              className={`p-1.5 rounded transition ${
-                viewMode === "split"
-                  ? "bg-[#222222] text-white"
-                  : "text-[#777] hover:text-white"
-              }`}
-            >
-              <Columns2 className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setViewMode("preview")}
-              title="Preview Mode"
-              className={`p-1.5 rounded transition ${
-                viewMode === "preview"
-                  ? "bg-[#222222] text-white"
-                  : "text-[#777] hover:text-white"
-              }`}
-            >
-              <Eye className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          {/* Note View Mode Toggles (only visible when active tab is a note) */}
+          {activeTab?.type === "note" && (
+            <div className="flex items-center bg-[#111111] p-0.5 rounded-lg border border-[#1f1f1f]">
+              <button
+                onClick={() =>
+                  setTabs((prev) =>
+                    prev.map((t) =>
+                      t.id === activeTab.id ? { ...t, viewMode: "edit" } : t
+                    )
+                  )
+                }
+                title="Edit Mode"
+                className={`p-1.5 rounded transition ${
+                  (activeTab.viewMode || "split") === "edit"
+                    ? "bg-[#222222] text-white"
+                    : "text-[#777] hover:text-white"
+                }`}
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() =>
+                  setTabs((prev) =>
+                    prev.map((t) =>
+                      t.id === activeTab.id ? { ...t, viewMode: "split" } : t
+                    )
+                  )
+                }
+                title="Split View"
+                className={`p-1.5 rounded transition ${
+                  (activeTab.viewMode || "split") === "split"
+                    ? "bg-[#222222] text-white"
+                    : "text-[#777] hover:text-white"
+                }`}
+              >
+                <Columns2 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() =>
+                  setTabs((prev) =>
+                    prev.map((t) =>
+                      t.id === activeTab.id ? { ...t, viewMode: "preview" } : t
+                    )
+                  )
+                }
+                title="Preview Mode"
+                className={`p-1.5 rounded transition ${
+                  (activeTab.viewMode || "split") === "preview"
+                    ? "bg-[#222222] text-white"
+                    : "text-[#777] hover:text-white"
+                }`}
+              >
+                <Eye className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           <div className="h-4 w-[1px] bg-[#222222] mx-1" />
 
-          {/* Git Sync Quick Button */}
+          {/* Quick Git Sync Button */}
           <button
             onClick={handleQuickSync}
             disabled={isSyncing}
@@ -473,7 +588,7 @@ export function App() {
             </span>
           </button>
 
-          {/* Git Modal Full Button */}
+          {/* Full Git Modal */}
           <button
             onClick={() => setGitModalOpen(true)}
             title="GitHub Sync & History"
@@ -482,7 +597,21 @@ export function App() {
             <UploadCloud className="w-4 h-4" />
           </button>
 
-          {/* Settings Button */}
+          {/* AI Assistant Toggle Button */}
+          <button
+            onClick={() => setAiSidebarOpen(!aiSidebarOpen)}
+            title="Toggle Gemma 4 AI Assistant"
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border transition ${
+              aiSidebarOpen
+                ? "bg-[#8b5cf6]/20 border-[#8b5cf6] text-[#a78bfa]"
+                : "bg-[#111111] border-[#222222] text-[#888] hover:text-white hover:bg-[#161616]"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-medium font-mono">Gemma AI</span>
+          </button>
+
+          {/* Settings */}
           <button
             onClick={() => setSettingsOpen(true)}
             title="Vault Settings"
@@ -495,9 +624,12 @@ export function App() {
 
       {/* ─── Main Content Workspace ────────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
-        {sidebarOpen && (
-          <aside className="w-64 bg-[#050505] border-r border-[#181818] flex flex-col shrink-0 select-none">
+        {/* Left Sidebar: File Tree */}
+        {leftSidebarOpen && (
+          <aside
+            style={{ width: `${leftWidth}px` }}
+            className="bg-[#050505] border-r border-[#181818] flex flex-col shrink-0 select-none overflow-hidden"
+          >
             {/* Sidebar Action Bar */}
             <div className="p-2 border-b border-[#141414] flex items-center justify-between">
               <span className="text-[11px] font-semibold text-[#777] uppercase tracking-wider pl-1">
@@ -546,8 +678,8 @@ export function App() {
             <div className="flex-1 overflow-y-auto">
               <FileTree
                 nodes={fileTree}
-                activePath={activeFilePath}
-                onSelectFile={(path) => loadFile(path)}
+                activePath={activeTab?.type === "note" ? activeTab.path || null : null}
+                onSelectFile={(path) => openFile(path)}
                 onCreateFile={(parent) => promptCreateFile(parent)}
                 onCreateFolder={(parent) => promptCreateFolder(parent)}
                 onRename={promptRename}
@@ -578,75 +710,219 @@ export function App() {
           </aside>
         )}
 
-        {/* Editor & Preview Pane */}
-        <main className="flex-1 flex overflow-hidden bg-[#000000]">
-          {activeFilePath ? (
-            <div className="flex-1 flex overflow-hidden">
-              {/* Left: Editor */}
-              {(viewMode === "split" || viewMode === "edit") && (
-                <div
-                  className={`h-full ${
-                    viewMode === "split" ? "w-1/2 border-r border-[#141414]" : "w-full"
-                  }`}
-                >
-                  <Editor
-                    content={noteContent}
-                    onChange={handleContentChange}
-                    onSave={saveFile}
-                    onImageInserted={() => {
-                      refreshTree();
-                      refreshGit();
-                    }}
-                    vaultPath={vaultPath}
-                    onCursorChange={(line, col) => setCursorPos({ line, col })}
-                  />
-                </div>
-              )}
+        {/* Resizer Handle for Left Sidebar */}
+        {leftSidebarOpen && (
+          <ResizeHandle
+            direction="left"
+            initialWidth={leftWidth}
+            minWidth={180}
+            maxWidth={500}
+            onResize={(w) => setLeftWidth(w)}
+          />
+        )}
 
-              {/* Right: Rendered Markdown Preview */}
-              {(viewMode === "split" || viewMode === "preview") && (
-                <div
-                  className={`h-full ${
-                    viewMode === "split" ? "w-1/2" : "w-full"
-                  }`}
-                >
-                  <Preview
-                    content={noteContent}
-                    vaultPath={vaultPath}
-                    onToggleTask={handleToggleTask}
-                  />
-                </div>
-              )}
+        {/* Center Workspace (Tabs + Main Editor / Web Tab) */}
+        <main className="flex-1 flex flex-col overflow-hidden bg-[#000000]">
+          {/* ─── Tabs Bar ────────────────────────────────────────────── */}
+          <div className="h-9 bg-[#070707] border-b border-[#181818] flex items-center justify-between px-2 gap-1 overflow-x-auto select-none shrink-0">
+            <div className="flex items-center gap-1 overflow-x-auto flex-1 h-full py-1">
+              {tabs.map((tab) => {
+                const isActive = tab.id === activeTabId;
+                return (
+                  <div
+                    key={tab.id}
+                    onClick={() => setActiveTabId(tab.id)}
+                    className={`group h-7 px-3 rounded flex items-center gap-2 cursor-pointer text-xs transition border ${
+                      isActive
+                        ? "bg-[#141414] text-white border-[#242424] font-medium border-b-2 border-b-[#8b5cf6]"
+                        : "bg-[#090909] text-[#777] border-[#161616] hover:bg-[#101010] hover:text-[#ccc]"
+                    }`}
+                  >
+                    {tab.type === "note" ? (
+                      <FileText className="w-3.5 h-3.5 text-[#a78bfa] shrink-0" />
+                    ) : (
+                      <Globe className="w-3.5 h-3.5 text-[#38bdf8] shrink-0" />
+                    )}
+
+                    <span className="truncate max-w-[140px] text-[12px]">
+                      {tab.title}
+                    </span>
+
+                    {tab.isDirty && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#f59e0b] shrink-0" />
+                    )}
+
+                    <button
+                      onClick={(e) => closeTab(tab.id, e)}
+                      title="Close Tab (Cmd+W)"
+                      className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#252525] hover:text-white transition"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-[#555]">
-              <div className="w-12 h-12 rounded-xl bg-[#0a0a0a] border border-[#1a1a1a] flex items-center justify-center text-[#8b5cf6] mb-4">
-                <FilePlus className="w-6 h-6" />
-              </div>
-              <h3 className="text-sm font-semibold text-[#888] mb-1">No Note Selected</h3>
-              <p className="text-xs text-[#555] max-w-sm mb-4">
-                Select a note from the sidebar, or create a new one to start writing.
-              </p>
+
+            {/* Add Tab Quick Action */}
+            <div className="flex items-center gap-1 shrink-0 pl-1">
               <button
                 onClick={() => promptCreateFile()}
-                className="px-4 py-2 bg-[#8b5cf6] hover:bg-[#7c3aed] text-white text-xs font-medium rounded-lg shadow-lg shadow-[#8b5cf6]/20 transition"
+                title="New Note Tab"
+                className="p-1 text-[#777] hover:text-white rounded hover:bg-[#161616] transition"
               >
-                Create New Note
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => openWebTab()}
+                title="New Web Browser Tab (Cmd+T)"
+                className="p-1 text-[#777] hover:text-[#38bdf8] rounded hover:bg-[#161616] transition"
+              >
+                <Globe className="w-3.5 h-3.5" />
               </button>
             </div>
-          )}
+          </div>
+
+          {/* ─── Tab Content Workspace ───────────────────────────────── */}
+          <div className="flex-1 flex overflow-hidden">
+            {activeTab?.type === "web" ? (
+              <WebTab
+                url={activeTab.url || "https://google.com"}
+                onUrlChange={(newUrl) =>
+                  setTabs((prev) =>
+                    prev.map((t) =>
+                      t.id === activeTab.id ? { ...t, url: newUrl } : t
+                    )
+                  )
+                }
+                onTitleChange={(newTitle) =>
+                  setTabs((prev) =>
+                    prev.map((t) =>
+                      t.id === activeTab.id ? { ...t, title: newTitle } : t
+                    )
+                  )
+                }
+              />
+            ) : activeTab?.path ? (
+              <div className="flex-1 flex overflow-hidden">
+                {/* Left: Editor */}
+                {((activeTab.viewMode || "split") === "split" ||
+                  (activeTab.viewMode || "split") === "edit") && (
+                  <div
+                    className={`h-full ${
+                      (activeTab.viewMode || "split") === "split"
+                        ? "w-1/2 border-r border-[#141414]"
+                        : "w-full"
+                    }`}
+                  >
+                    <Editor
+                      content={activeTab.content || ""}
+                      onChange={handleContentChange}
+                      onSave={saveFile}
+                      onImageInserted={() => {
+                        refreshTree();
+                        refreshGit();
+                      }}
+                      vaultPath={vaultPath}
+                      onCursorChange={(line, col) => setCursorPos({ line, col })}
+                    />
+                  </div>
+                )}
+
+                {/* Right: Rendered Markdown Preview */}
+                {((activeTab.viewMode || "split") === "split" ||
+                  (activeTab.viewMode || "split") === "preview") && (
+                  <div
+                    className={`h-full ${
+                      (activeTab.viewMode || "split") === "split"
+                        ? "w-1/2"
+                        : "w-full"
+                    }`}
+                  >
+                    <Preview
+                      content={activeTab.content || ""}
+                      vaultPath={vaultPath}
+                      onToggleTask={handleToggleTask}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-[#555]">
+                <div className="w-12 h-12 rounded-xl bg-[#0a0a0a] border border-[#1a1a1a] flex items-center justify-center text-[#8b5cf6] mb-4">
+                  <FilePlus className="w-6 h-6" />
+                </div>
+                <h3 className="text-sm font-semibold text-[#888] mb-1">No Note Selected</h3>
+                <p className="text-xs text-[#555] max-w-sm mb-4">
+                  Select a note from the sidebar or open a web browser tab.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => promptCreateFile()}
+                    className="px-4 py-2 bg-[#8b5cf6] hover:bg-[#7c3aed] text-white text-xs font-medium rounded-lg shadow-lg shadow-[#8b5cf6]/20 transition"
+                  >
+                    Create Note
+                  </button>
+                  <button
+                    onClick={() => openWebTab()}
+                    className="px-4 py-2 bg-[#161616] hover:bg-[#222222] text-[#e0e0e0] text-xs font-medium rounded-lg border border-[#262626] transition flex items-center gap-1.5"
+                  >
+                    <Globe className="w-3.5 h-3.5" />
+                    Open Web Tab
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </main>
+
+        {/* Resizer Handle for Right AI Sidebar */}
+        {aiSidebarOpen && (
+          <ResizeHandle
+            direction="right"
+            initialWidth={rightWidth}
+            minWidth={280}
+            maxWidth={650}
+            onResize={(w) => setRightWidth(w)}
+          />
+        )}
+
+        {/* Right Sidebar: Ollama Gemma 4 AI Assistant */}
+        {aiSidebarOpen && (
+          <div style={{ width: `${rightWidth}px` }} className="h-full shrink-0">
+            <AiSidebar
+              isOpen={aiSidebarOpen}
+              onClose={() => setAiSidebarOpen(false)}
+              activeNoteTitle={activeTab?.type === "note" ? activeTab.title : ""}
+              activeNotePath={activeTab?.type === "note" ? activeTab.path || null : null}
+              activeNoteContent={activeTab?.type === "note" ? activeTab.content || "" : ""}
+              vaultPath={vaultPath}
+              onInsertIntoNote={handleInsertIntoNote}
+            />
+          </div>
+        )}
       </div>
 
       {/* ─── Bottom Status Bar ────────────────────────────────────────── */}
       <footer className="h-6 bg-[#040404] border-t border-[#141414] px-4 flex items-center justify-between text-[11px] text-[#666] shrink-0 font-mono select-none">
         <div className="flex items-center gap-4">
-          <span>Ln {cursorPos.line}, Col {cursorPos.col}</span>
-          <span>{words} words</span>
-          <span>{chars} characters</span>
+          {activeTab?.type === "note" ? (
+            <>
+              <span>Ln {cursorPos.line}, Col {cursorPos.col}</span>
+              <span>{words} words</span>
+              <span>{chars} characters</span>
+            </>
+          ) : (
+            <span className="text-[#38bdf8] flex items-center gap-1">
+              <Globe className="w-3 h-3" />
+              {activeTab?.url || "Web Page"}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-[#888]">Markdown UTF-8</span>
+          <span className="text-[#888]">
+            {activeTab?.type === "note" ? "Markdown UTF-8" : "Webview Tab"}
+          </span>
           <span className="text-[#a78bfa]">
             {vaultPath.split("/").pop() || "vault"}
           </span>

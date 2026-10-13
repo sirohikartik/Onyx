@@ -30,3 +30,36 @@ export interface GitCommitItem {
 }
 
 export type ViewMode = "split" | "edit" | "preview";
+
+export type TabType = "note" | "web";
+
+export interface TabItem {
+  id: string;
+  type: TabType;
+  title: string;
+  path?: string;
+  url?: string;
+  isDirty?: boolean;
+  content?: string;
+  viewMode?: ViewMode;
+}
+
+export interface VaultSearchResult {
+  path: string;
+  title: string;
+  matches: string[];
+}
+
+export interface VaultNoteItem {
+  path: string;
+  title: string;
+  content: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp: number;
+  referencedNotes?: string[];
+}

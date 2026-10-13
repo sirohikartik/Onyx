@@ -8,6 +8,22 @@
 ## 🌟 Key Features
 
 - **True Pitch Black (`#000000`)**: Absolute black OLED aesthetic with subtle `#181818` borders and Obsidian signature violet accents (`#8b5cf6`).
+- **Multi-Tab Workspace**:
+  - Open multiple Markdown notes and web pages side-by-side in tabs.
+  - Quick tab switching, close (`Cmd+W`), open new (`Cmd+T`), and unsaved changes indicators.
+- **Embedded Web Rendering**:
+  - Open web pages directly inside Onyx tabs by pasting or typing URLs.
+  - Built-in navigation (Back, Forward, Reload, Open External, Copy Link).
+  - Rust-powered Web Proxy fallback that automatically bypasses `X-Frame-Options` and CORS restrictions.
+  - Quick bookmark bar (Google, GitHub, Rust Docs, Wikipedia, ArXiv).
+- **Ollama AI Assistant (`gemma4:31b-cloud`)**:
+  - Dedicated right-side AI assistant sidebar powered by Ollama Cloud models.
+  - **Full Note Visibility**: Automatically passes active note content and vault library index as context.
+  - Streaming token responses in real-time.
+  - One-click **"Insert to Note"** to inject generated content directly into your active Markdown note.
+  - Prompt chips: *Summarize this note*, *Extract action items*, *Explain key concepts*.
+- **Draggable & Resizable Sidebars**:
+  - Both the left File Explorer and right AI Assistant sidebars can be smoothly resized by dragging their borders.
 - **Instant Image Pasting (`Cmd+V`)**: Paste screenshots directly from your clipboard or drag and drop image files into the editor. Images are automatically saved to your vault's `attachments/` folder and embedded with Markdown links (`![filename](attachments/...)`).
 - **Hierarchical File Tree**:
   - Unlimited folder and subfolder nesting.
@@ -38,7 +54,7 @@
 onyx/
 ├── src-tauri/             # Native Rust Backend (Tauri v2)
 │   ├── src/
-│   │   ├── lib.rs         # Filesystem, Base64 image handler, and Git runner
+│   │   ├── lib.rs         # Filesystem, Base64 image handler, Web fetcher, and Git runner
 │   │   └── main.rs        # Entry point and macOS window setup
 │   └── Cargo.toml         # Rust dependencies: walkdir, chrono, base64, serde
 ├── src/                   # Frontend Workspace
@@ -46,9 +62,12 @@ onyx/
 │   │   ├── Editor.tsx     # Textarea editor, line numbers, paste & drop handlers
 │   │   ├── FileTree.tsx   # Collapsible vault explorer & context menu
 │   │   ├── Preview.tsx    # Marked renderer, syntax highlighting, image cache
+│   │   ├── WebTab.tsx     # Webpage renderer, omnibox URL bar, proxy viewer
+│   │   ├── AiSidebar.tsx  # Ollama gemma4:31b-cloud integration with note awareness
+│   │   ├── ResizeHandle.tsx # Draggable sidebar border dividers
 │   │   ├── GitModal.tsx   # Git commit dialog & history viewer
 │   │   └── SettingsModal.tsx # Vault location & SSH configuration
-│   ├── App.tsx            # Main application layout and state management
+│   ├── App.tsx            # Multi-tab layout, state management, and toolbar
 │   ├── App.css            # Custom Obsidian pitch-black CSS & typography
 │   └── types.ts           # TypeScript interfaces
 ├── vite.config.ts         # Vite build configuration with Tailwind CSS v4
