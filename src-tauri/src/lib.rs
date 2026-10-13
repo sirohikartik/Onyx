@@ -721,6 +721,132 @@ fn fetch_web_page(url: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn fetch_web_reader(url: String) -> Result<String, String> {
+    let mut clean_url = url.trim().to_string();
+    if !clean_url.starts_with("http://") && !clean_url.starts_with("https://") {
+        clean_url = format!("https://{}", clean_url);
+    }
+
+    let output = Command::new("curl")
+        .args([
+            "-sL",
+            "--max-time",
+            "10",
+            "-H",
+            "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            &clean_url,
+        ])
+        .output()
+        .map_err(|e| format!("Curl error: {}", e))?;
+
+    if !output.status.success() {
+        return Err("Failed to load webpage".to_string());
+    }
+
+    let raw_html = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // Remove script tags to avoid CORS / frame violation errors
+    let no_scripts = regex_replace_all(r"(?is)<script.*?</script>", &raw_html, "");
+    let no_styles = regex_replace_all(r"(?is)<style.*?</style>", &no_scripts, "");
+    let no_iframes = regex_replace_all(r"(?is)<iframe.*?</iframe>", &no_styles, "");
+
+    let onyx_reader_css = r#"
+        <style>
+            :root { color-scheme: dark; }
+            body {
+                background-color: #000000 !important;
+                color: #d8d8d8 !important;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif !important;
+                line-height: 1.75 !important;
+                max-width: 860px !important;
+                margin: 0 auto !important;
+                padding: 40px 24px 80px 24px !important;
+                font-size: 16px !important;
+            }
+            h1, h2, h3, h4, h5, h6 {
+                color: #ffffff !important;
+                font-weight: 600 !important;
+                margin-top: 1.6em !important;
+                margin-bottom: 0.6em !important;
+                line-height: 1.3 !important;
+            }
+            h1 { font-size: 2.1em !important; border-bottom: 1px solid #1f1f1f !important; padding-bottom: 0.3em !important; }
+            h2 { font-size: 1.6em !important; border-bottom: 1px solid #1a1a1a !important; padding-bottom: 0.25em !important; }
+            p { margin-bottom: 1.2em !important; }
+            a { color: #a78bfa !important; text-decoration: none !important; }
+            a:hover { text-decoration: underline !important; }
+            img { max-width: 100% !important; height: auto !important; border-radius: 8px !important; border: 1px solid #222 !important; margin: 1.5em 0 !important; }
+            pre, code {
+                background-color: #0c0c0c !important;
+                color: #e2e8f0 !important;
+                border-radius: 6px !important;
+                font-family: "JetBrains Mono", "SF Mono", monospace !important;
+                border: 1px solid #1e1e1e !important;
+            }
+            pre { padding: 14px !important; overflow-x: auto !important; margin: 1.4em 0 !important; }
+            code { padding: 2px 6px !important; font-size: 0.9em !important; color: #f43f5e !important; }
+            pre code { border: none !important; padding: 0 !important; color: #e2e8f0 !important; }
+            blockquote {
+                border-left: 3px solid #8b5cf6 !important;
+                background-color: #080808 !important;
+                padding: 8px 16px !important;
+                margin: 1.4em 0 !important;
+                color: #888888 !important;
+                border-radius: 0 4px 4px 0 !important;
+            }
+            table { width: 100% !important; border-collapse: collapse !important; margin: 1.4em 0 !important; }
+            th, td { border: 1px solid #222 !important; padding: 8px 12px !important; text-align: left !important; }
+            th { background-color: #0e0e0e !important; color: #fff !important; }
+        </style>
+    "#;
+
+    let base_tag = format!("<base href=\"{}\" target=\"_blank\">", clean_url);
+    let final_html = format!(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">{}{}</head><body>{}</body></html>",
+        base_tag,
+        onyx_reader_css,
+        no_iframes
+    );
+
+    Ok(final_html)
+}
+
+fn regex_replace_all(pattern: &str, text: &str, replacement: &str) -> String {
+    strip_tags_simple(text, pattern, replacement)
+}
+
+fn strip_tags_simple(text: &str, tag_pattern: &str, _replacement: &str) -> String {
+    let lower_tag = if tag_pattern.contains("script") {
+        "script"
+    } else if tag_pattern.contains("style") {
+        "style"
+    } else if tag_pattern.contains("iframe") {
+        "iframe"
+    } else {
+        return text.to_string();
+    };
+
+    let open_tag = format!("<{}", lower_tag);
+    let close_tag = format!("</{}>", lower_tag);
+    let mut result = String::new();
+    let mut remainder = text;
+
+    while let Some(start_idx) = remainder.to_lowercase().find(&open_tag) {
+        result.push_str(&remainder[..start_idx]);
+        let after_start = &remainder[start_idx..];
+        if let Some(end_idx) = after_start.to_lowercase().find(&close_tag) {
+            remainder = &after_start[end_idx + close_tag.len()..];
+        } else {
+            // No closing tag found, skip the rest
+            remainder = "";
+            break;
+        }
+    }
+    result.push_str(remainder);
+    result
+}
+
+#[tauri::command]
 fn search_vault(query: String, vault_path: Option<String>) -> Result<Vec<VaultSearchResult>, String> {
     let vault = resolve_vault_path(vault_path);
     if !vault.exists() {
@@ -840,6 +966,27 @@ fn get_ollama_models() -> Result<Vec<String>, String> {
     ])
 }
 
+#[tauri::command]
+fn open_native_webview(app: tauri::AppHandle, url: String, title: Option<String>) -> Result<(), String> {
+    let mut clean_url = url.trim().to_string();
+    if !clean_url.starts_with("http://") && !clean_url.starts_with("https://") {
+        clean_url = format!("https://{}", clean_url);
+    }
+
+    let parsed_url: tauri::Url = clean_url.parse().map_err(|e| format!("Invalid URL: {}", e))?;
+    let label = format!("web_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+    let window_title = title.unwrap_or_else(|| clean_url.clone());
+
+    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::External(parsed_url))
+        .title(window_title)
+        .inner_size(1050.0, 750.0)
+        .min_inner_size(600.0, 450.0)
+        .build()
+        .map_err(|e| format!("Failed to create webview window: {}", e))?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -861,9 +1008,11 @@ pub fn run() {
             git_sync,
             git_log_history,
             fetch_web_page,
+            fetch_web_reader,
             search_vault,
             get_vault_all_notes,
-            get_ollama_models
+            get_ollama_models,
+            open_native_webview
         ])
         .run(tauri::generate_context!())
         .expect("error while running onyx application");
